@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ノベルゲーム</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <!-- 16:9 固定比率のゲーム画面コンテナ -->
+  <div id="game-container">
+    <!-- 背景レイヤー -->
+    <img id="bg-image" src="" alt="背景">
+
+    <!-- キャラクター立ち絵レイヤー -->
+    <div id="chara-layer">
+      <img id="chara-image" src="" alt="キャラクター">
+    </div>
+
+    <!-- UIレイヤー（名前枠・メッセージウィンドウ） -->
+    <div id="ui-layer">
+      <!-- 名前ウィンドウ -->
+      <div id="name-box">
+        <span id="chara-name"></span>
+      </div>
+
+      <!-- メッセージウィンドウ -->
+      <div id="message-box">
+        <p id="message-text"></p>
+
+        <!-- 右下メニュー（save | Load | log） -->
+        <div id="menu-box">
+          <button type="button" id="btn-save" class="menu-btn">save</button>
+          <span class="menu-sep">|</span>
+          <button type="button" id="btn-load" class="menu-btn">Load</button>
+          <span class="menu-sep">|</span>
+          <button type="button" id="btn-log" class="menu-btn">log</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 通知表示（セーブ完了など） -->
+    <div id="toast" class="hidden"></div>
+
+    <!-- バックログ画面 -->
+    <div id="log-modal" class="hidden">
+      <div id="log-panel">
+        <div id="log-header">
+          <span>バックログ</span>
+          <button type="button" id="btn-close-log">閉じる</button>
+        </div>
+        <div id="log-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./script.js"></script>
+</body>
+</html>

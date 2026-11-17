@@ -4,22 +4,297 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ノベルゲーム</title>
-  <link rel="stylesheet" href="./style.css">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      background-color: #111;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", sans-serif;
+    }
+
+    /* 16:9 画面コンテナ */
+    #game-container {
+      --w: min(100vw, 177.7778vh);
+      --h: calc(var(--w) * 9 / 16);
+      --border-w: max(2px, calc(var(--w) * 0.0038));
+
+      position: relative;
+      width: var(--w);
+      height: var(--h);
+      background-color: #87ceeb;
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    /* 背景画像 */
+    #bg-image {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      z-index: 1;
+    }
+
+    /* キャラクター立ち絵 */
+    #chara-layer {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    #chara-image {
+      height: 88%;
+      max-width: 90%;
+      object-fit: contain;
+    }
+
+    /* 選択肢レイヤー */
+    #choice-layer {
+      position: absolute;
+      top: 12%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 64%;
+      display: flex;
+      flex-direction: column;
+      gap: calc(var(--h) * 0.025);
+      z-index: 10;
+    }
+
+    .choice-btn {
+      width: 100%;
+      padding: calc(var(--h) * 0.024) calc(var(--w) * 0.025);
+      background-color: #ffffff;
+      border: var(--border-w) solid #000000;
+      font-family: inherit;
+      font-size: calc(var(--w) * 0.022);
+      font-weight: 900;
+      color: #000000;
+      text-align: center;
+      cursor: pointer;
+      transition: background-color 0.15s, color 0.15s;
+    }
+
+    .choice-btn:hover {
+      background-color: #000000;
+      color: #ffffff;
+    }
+
+    /* UI全体（名前枠＋メッセージウィンドウ） */
+    #ui-layer {
+      position: absolute;
+      left: 4%;
+      right: 4%;
+      bottom: 2.5%;
+      z-index: 5;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    /* 名前ウィンドウ */
+    #name-box {
+      width: 21.5%;
+      height: calc(var(--h) * 0.095);
+      background-color: #ffffff;
+      border: var(--border-w) solid #000000;
+      border-bottom: none;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 0 calc(var(--w) * 0.01);
+      z-index: 6;
+    }
+
+    #name-box.hidden {
+      visibility: hidden;
+    }
+
+    #chara-name {
+      font-size: calc(var(--w) * 0.036);
+      font-weight: 900;
+      color: #000000;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* メッセージウィンドウ */
+    #message-box {
+      position: relative;
+      width: 100%;
+      height: calc(var(--h) * 0.345);
+      background-color: #ffffff;
+      border: var(--border-w) solid #000000;
+      padding: calc(var(--h) * 0.05) calc(var(--w) * 0.025) calc(var(--h) * 0.095);
+      display: flex;
+      align-items: center;
+    }
+
+    #message-text {
+      font-size: calc(var(--w) * 0.024);
+      font-weight: 900;
+      color: #000000;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      width: 100%;
+    }
+
+    /* 右下メニュー（save | Load | log） */
+    #menu-box {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      height: calc(var(--h) * 0.088);
+      padding: 0 calc(var(--w) * 0.022);
+      background-color: #ffffff;
+      border-top: var(--border-w) solid #000000;
+      border-left: var(--border-w) solid #000000;
+      display: flex;
+      align-items: center;
+      gap: calc(var(--w) * 0.008);
+    }
+
+    .menu-btn {
+      background: none;
+      border: none;
+      font-family: inherit;
+      font-size: calc(var(--w) * 0.019);
+      font-weight: 900;
+      color: #000000;
+      cursor: pointer;
+      padding: 2px 4px;
+    }
+
+    .menu-btn:hover {
+      color: #555555;
+      text-decoration: underline;
+    }
+
+    .menu-sep {
+      font-size: calc(var(--w) * 0.019);
+      font-weight: 400;
+      color: #888888;
+    }
+
+    /* トースト通知 */
+    #toast {
+      position: absolute;
+      top: 4%;
+      right: 4%;
+      background-color: rgba(0, 0, 0, 0.85);
+      color: #ffffff;
+      font-size: calc(var(--w) * 0.016);
+      font-weight: bold;
+      padding: calc(var(--h) * 0.015) calc(var(--w) * 0.02);
+      z-index: 20;
+      pointer-events: none;
+    }
+
+    /* バックログモーダル */
+    #log-modal {
+      position: absolute;
+      inset: 0;
+      background-color: rgba(0, 0, 0, 0.75);
+      z-index: 30;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: default;
+    }
+
+    #log-panel {
+      width: 84%;
+      height: 80%;
+      background-color: #ffffff;
+      border: var(--border-w) solid #000000;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #log-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: calc(var(--h) * 0.02) calc(var(--w) * 0.02);
+      border-bottom: var(--border-w) solid #000000;
+      font-size: calc(var(--w) * 0.022);
+      font-weight: 900;
+    }
+
+    #btn-close-log {
+      background-color: #ffffff;
+      border: var(--border-w) solid #000000;
+      font-size: calc(var(--w) * 0.016);
+      font-weight: 900;
+      padding: calc(var(--h) * 0.008) calc(var(--w) * 0.015);
+      cursor: pointer;
+    }
+
+    #btn-close-log:hover {
+      background-color: #000000;
+      color: #ffffff;
+    }
+
+    #log-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: calc(var(--h) * 0.025) calc(var(--w) * 0.025);
+      display: flex;
+      flex-direction: column;
+      gap: calc(var(--h) * 0.025);
+    }
+
+    .log-item {
+      border-bottom: 1px solid #cccccc;
+      padding-bottom: calc(var(--h) * 0.015);
+    }
+
+    .log-name {
+      font-size: calc(var(--w) * 0.018);
+      font-weight: 900;
+      margin-bottom: 4px;
+    }
+
+    .log-text {
+      font-size: calc(var(--w) * 0.018);
+      font-weight: bold;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+  </style>
 </head>
 <body>
   <div id="game-container">
-    <!-- 背景レイヤー -->
-    <img id="bg-image" src="" alt="背景">
+    <img id="bg-image" src="" alt="">
 
-    <!-- キャラクター立ち絵レイヤー -->
     <div id="chara-layer">
-      <img id="chara-image" src="" alt="キャラクター">
+      <img id="chara-image" src="" alt="">
     </div>
 
-    <!-- 選択肢レイヤー -->
     <div id="choice-layer" class="hidden"></div>
 
-    <!-- UIレイヤー -->
     <div id="ui-layer">
       <div id="name-box">
         <span id="chara-name"></span>
@@ -38,10 +313,8 @@
       </div>
     </div>
 
-    <!-- 通知表示 -->
     <div id="toast" class="hidden"></div>
 
-    <!-- バックログ画面 -->
     <div id="log-modal" class="hidden">
       <div id="log-panel">
         <div id="log-header">
@@ -53,8 +326,334 @@
     </div>
   </div>
 
-  <!-- ★先にシナリオデータを読み込み、その後に本体を読み込む -->
+  <!-- 別ファイルのシナリオデータを読み込み -->
   <script src="./scenario.js"></script>
-  <script src="./script.js"></script>
+
+  <script>
+    const SAVE_KEY = "novel_game_save_v4";
+    const TEXT_SPEED_MS = 30;
+
+    const gameContainer = document.getElementById("game-container");
+    const bgImage = document.getElementById("bg-image");
+    const charaImage = document.getElementById("chara-image");
+    const choiceLayer = document.getElementById("choice-layer");
+    const nameBox = document.getElementById("name-box");
+    const charaName = document.getElementById("chara-name");
+    const messageText = document.getElementById("message-text");
+    const toast = document.getElementById("toast");
+    const logModal = document.getElementById("log-modal");
+    const logList = document.getElementById("log-list");
+
+    // scenario.js が読み込めなかった場合の表示
+    if (typeof SCRIPT_TEXT === "undefined" || typeof GAME_ASSETS === "undefined") {
+      charaName.textContent = "エラー";
+      messageText.textContent = "scenario.js が見つかりません。index.html と同じフォルダに scenario.js を置いてください。";
+      throw new Error("scenario.js not loaded");
+    }
+
+    function parseScenario(rawText) {
+      const lines = rawText.split(/\r?\n/);
+      const steps = [];
+      const labels = {};
+
+      let currentBg = "";
+      let currentChara = "";
+      let currentName = "";
+
+      for (let rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("//")) continue;
+
+        if (line.startsWith("*")) {
+          const labelName = line.slice(1).trim();
+          labels[labelName] = steps.length;
+          continue;
+        }
+
+        if (line.startsWith("->")) {
+          const target = line.slice(2).trim().replace(/^\*/, "");
+          steps.push({ type: "jump", target });
+          continue;
+        }
+
+        if (line.startsWith("@bg ")) {
+          currentBg = line.slice(4).trim();
+          continue;
+        }
+
+        if (line.startsWith("@chara ")) {
+          currentChara = line.slice(7).trim();
+          continue;
+        }
+
+        if (line.startsWith("#")) {
+          currentName = line.slice(1).trim();
+          continue;
+        }
+
+        if (line.startsWith("?")) {
+          const choiceStr = line.slice(1).trim();
+          const choices = choiceStr.split("|").map(part => {
+            const [label, targetRaw] = part.split("->");
+            return {
+              label: label ? label.trim() : "選択",
+              target: targetRaw ? targetRaw.trim().replace(/^\*/, "") : ""
+            };
+          });
+
+          const prevStep = steps[steps.length - 1];
+          if (prevStep && prevStep.type === "say") {
+            prevStep.choices = choices;
+          } else {
+            steps.push({
+              type: "say",
+              name: currentName,
+              text: "",
+              bg: currentBg,
+              chara: currentChara,
+              choices
+            });
+          }
+          continue;
+        }
+
+        steps.push({
+          type: "say",
+          name: currentName,
+          text: line,
+          bg: currentBg,
+          chara: currentChara,
+          choices: null
+        });
+      }
+
+      return { steps, labels };
+    }
+
+    const { steps: GAME_STEPS, labels: GAME_LABELS } = parseScenario(SCRIPT_TEXT);
+
+    let currentIndex = 0;
+    let displayedText = "";
+    let typingTimer = null;
+    let isTyping = false;
+    let isChoosing = false;
+    let historyLog = [];
+
+    function resolveAsset(type, key) {
+      if (!key) return "";
+      if (GAME_ASSETS[type] && key in GAME_ASSETS[type]) {
+        return GAME_ASSETS[type][key];
+      }
+      return key;
+    }
+
+    function renderChoices(choices) {
+      isChoosing = true;
+      choiceLayer.innerHTML = "";
+
+      choices.forEach(choice => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "choice-btn";
+        btn.textContent = choice.label;
+
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          historyLog.push({
+            index: currentIndex,
+            name: "【選択】",
+            text: choice.label
+          });
+          hideChoices();
+          jumpToLabel(choice.target);
+        });
+
+        choiceLayer.appendChild(btn);
+      });
+
+      choiceLayer.classList.remove("hidden");
+    }
+
+    function hideChoices() {
+      isChoosing = false;
+      choiceLayer.innerHTML = "";
+      choiceLayer.classList.add("hidden");
+    }
+
+    function jumpToLabel(labelName) {
+      if (!(labelName in GAME_LABELS)) {
+        showToast(`飛び先「*${labelName}」が見つかりません`);
+        return;
+      }
+      currentIndex = GAME_LABELS[labelName];
+      renderStep(currentIndex);
+    }
+
+    function renderStep(index, skipTyping = false) {
+      let guard = 0;
+      while (GAME_STEPS[index] && GAME_STEPS[index].type === "jump") {
+        const target = GAME_STEPS[index].target;
+        if (!(target in GAME_LABELS) || guard > 50) {
+          showToast(`飛び先「*${target}」が見つかりません`);
+          return;
+        }
+        index = GAME_LABELS[target];
+        currentIndex = index;
+        guard++;
+      }
+
+      const step = GAME_STEPS[index];
+      if (!step) {
+        showToast("最後のセリフです");
+        return;
+      }
+
+      hideChoices();
+
+      const bgSrc = resolveAsset("bg", step.bg);
+      if (bgSrc) bgImage.src = bgSrc;
+
+      const charaSrc = resolveAsset("chara", step.chara);
+      if (charaSrc) {
+        charaImage.src = charaSrc;
+        charaImage.style.display = "block";
+      } else {
+        charaImage.style.display = "none";
+      }
+
+      if (step.name) {
+        charaName.textContent = step.name;
+        nameBox.classList.remove("hidden");
+      } else {
+        charaName.textContent = "";
+        nameBox.classList.add("hidden");
+      }
+
+      const lastLog = historyLog[historyLog.length - 1];
+      if (step.text && (!lastLog || lastLog.index !== index)) {
+        historyLog.push({
+          index: index,
+          name: step.name || "",
+          text: step.text
+        });
+      }
+
+      const onTextComplete = () => {
+        isTyping = false;
+        if (step.choices && step.choices.length > 0) {
+          renderChoices(step.choices);
+        }
+      };
+
+      clearInterval(typingTimer);
+      if (skipTyping || !step.text) {
+        messageText.textContent = step.text;
+        onTextComplete();
+        return;
+      }
+
+      isTyping = true;
+      displayedText = "";
+      messageText.textContent = "";
+      let charPos = 0;
+
+      typingTimer = setInterval(() => {
+        displayedText += step.text[charPos];
+        messageText.textContent = displayedText;
+        charPos++;
+
+        if (charPos >= step.text.length) {
+          clearInterval(typingTimer);
+          onTextComplete();
+        }
+      }, TEXT_SPEED_MS);
+    }
+
+    function advance() {
+      if (!logModal.classList.contains("hidden")) return;
+      if (isChoosing) return;
+
+      const step = GAME_STEPS[currentIndex];
+      if (!step) return;
+
+      if (isTyping) {
+        clearInterval(typingTimer);
+        messageText.textContent = step.text;
+        isTyping = false;
+        if (step.choices && step.choices.length > 0) {
+          renderChoices(step.choices);
+        }
+        return;
+      }
+
+      if (currentIndex < GAME_STEPS.length - 1) {
+        currentIndex++;
+        renderStep(currentIndex);
+      } else {
+        showToast("最後のセリフです");
+      }
+    }
+
+    let toastTimer = null;
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.remove("hidden");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.classList.add("hidden");
+      }, 1800);
+    }
+
+    gameContainer.addEventListener("click", advance);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        advance();
+      }
+    });
+
+    document.getElementById("btn-save").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const saveData = { currentIndex, historyLog };
+      localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
+      showToast("セーブしました");
+    });
+
+    document.getElementById("btn-load").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) {
+        showToast("セーブデータがありません");
+        return;
+      }
+      const saveData = JSON.parse(raw);
+      currentIndex = saveData.currentIndex || 0;
+      historyLog = saveData.historyLog || [];
+      renderStep(currentIndex, true);
+      showToast("ロードしました");
+    });
+
+    document.getElementById("btn-log").addEventListener("click", (e) => {
+      e.stopPropagation();
+      logList.innerHTML = historyLog.map(item => `
+        <div class="log-item">
+          <div class="log-name">${item.name || "（地の文）"}</div>
+          <div class="log-text">${item.text}</div>
+        </div>
+      `).join("");
+      logModal.classList.remove("hidden");
+      logList.scrollTop = logList.scrollHeight;
+    });
+
+    document.getElementById("btn-close-log").addEventListener("click", (e) => {
+      e.stopPropagation();
+      logModal.classList.add("hidden");
+    });
+    logModal.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
+
+    renderStep(currentIndex);
+  </script>
 </body>
 </html>

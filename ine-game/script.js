@@ -1,7 +1,96 @@
-const SAVE_KEY = "novel_game_save_v2";
+const SAVE_KEY = "novel_game_save_v3";
 const TEXT_SPEED_MS = 30;
 
-let currentScene = "start";
+// テキストシナリオをプログラム用のデータに変換
+function parseScenario(rawText) {
+  const lines = rawText.split(/\r?\n/);
+  const steps = [];
+  const labels = {};
+
+  let currentBg = "";
+  let currentChara = "";
+  let currentName = "";
+
+  for (let rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("//")) continue; // 空行とコメントは無視
+
+    // ラベル定義 (*label)
+    if (line.startsWith("*")) {
+      const labelName = line.slice(1).trim();
+      labels[labelName] = steps.length;
+      continue;
+    }
+
+    // 無条件ジャンプ (-> *label)
+    if (line.startsWith("->")) {
+      const target = line.slice(2).trim().replace(/^\*/, "");
+      steps.push({ type: "jump", target });
+      continue;
+    }
+
+    // 背景変更 (@bg name)
+    if (line.startsWith("@bg ")) {
+      currentBg = line.slice(4).trim();
+      continue;
+    }
+
+    // キャラ変更 (@chara name)
+    if (line.startsWith("@chara ")) {
+      currentChara = line.slice(7).trim();
+      continue;
+    }
+
+    // 名前変更 (# name)
+    if (line === "#" || line.startsWith("# ")) {
+      currentName = line.slice(1).trim();
+      continue;
+    }
+
+    // 選択肢 (? label1 -> *target1 | label2 -> *target2)
+    if (line.startsWith("?")) {
+      const choiceStr = line.slice(1).trim();
+      const choices = choiceStr.split("|").map(part => {
+        const [label, targetRaw] = part.split("->");
+        return {
+          label: label ? label.trim() : "選択",
+          target: targetRaw ? targetRaw.trim().replace(/^\*/, "") : ""
+        };
+      });
+
+      // 直前のセリフに選択肢を紐づける
+      const prevStep = steps[steps.length - 1];
+      if (prevStep && prevStep.type === "say") {
+        prevStep.choices = choices;
+      } else {
+        steps.push({
+          type: "say",
+          name: currentName,
+          text: "",
+          bg: currentBg,
+          chara: currentChara,
+          choices
+        });
+      }
+      continue;
+    }
+
+    // それ以外はすべてセリフ行
+    steps.push({
+      type: "say",
+      name: currentName,
+      text: line,
+      bg: currentBg,
+      chara: currentChara,
+      choices: null
+    });
+  }
+
+  return { steps, labels };
+}
+
+const { steps: GAME_STEPS, labels: GAME_LABELS } = parseScenario(SCRIPT_TEXT);
+
 let currentIndex = 0;
 let displayedText = "";
 let typingTimer = null;
@@ -20,7 +109,6 @@ const toast = document.getElementById("toast");
 const logModal = document.getElementById("log-modal");
 const logList = document.getElementById("log-list");
 
-// アセット名または直接パスから画像URLを取得
 function resolveAsset(type, key) {
   if (!key) return "";
   if (GAME_ASSETS[type] && key in GAME_ASSETS[type]) {
@@ -29,7 +117,6 @@ function resolveAsset(type, key) {
   return key;
 }
 
-// 選択肢ボタンを表示
 function renderChoices(choices) {
   isChoosing = true;
   choiceLayer.innerHTML = "";
@@ -42,15 +129,13 @@ function renderChoices(choices) {
 
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      // 選んだ選択肢をバックログに記録
       historyLog.push({
-        scene: currentScene,
         index: currentIndex,
         name: "【選択】",
         text: choice.label
       });
       hideChoices();
-      jumpToScene(choice.next);
+      jumpToLabel(choice.target);
     });
 
     choiceLayer.appendChild(btn);
@@ -59,37 +144,47 @@ function renderChoices(choices) {
   choiceLayer.classList.remove("hidden");
 }
 
-// 選択肢を隠す
 function hideChoices() {
   isChoosing = false;
   choiceLayer.innerHTML = "";
   choiceLayer.classList.add("hidden");
 }
 
-// 指定した場面の最初から再生
-function jumpToScene(sceneName) {
-  if (!GAME_SCENARIO[sceneName]) {
-    showToast(`場面「${sceneName}」が見つかりません`);
+function jumpToLabel(labelName) {
+  if (!(labelName in GAME_LABELS)) {
+    showToast(`飛び先「*${labelName}」が見つかりません`);
     return;
   }
-  currentScene = sceneName;
-  currentIndex = 0;
-  renderStep(currentScene, currentIndex);
+  currentIndex = GAME_LABELS[labelName];
+  renderStep(currentIndex);
 }
 
-// 1行分の描画
-function renderStep(sceneName, index, skipTyping = false) {
-  const sceneList = GAME_SCENARIO[sceneName];
-  if (!sceneList || !sceneList[index]) return;
+function renderStep(index, skipTyping = false) {
+  let guard = 0;
+  while (GAME_STEPS[index] && GAME_STEPS[index].type === "jump") {
+    const target = GAME_STEPS[index].target;
+    if (!(target in GAME_LABELS) || guard > 50) {
+      showToast(`飛び先「*${target}」が見つかりません`);
+      return;
+    }
+    index = GAME_LABELS[target];
+    currentIndex = index;
+    guard++;
+  }
 
-  const step = sceneList[index];
+  const step = GAME_STEPS[index];
+  if (!step) {
+    showToast("最後のセリフです");
+    return;
+  }
+
   hideChoices();
 
-  // 背景の更新
+  // 背景更新
   const bgSrc = resolveAsset("bg", step.bg);
   if (bgSrc) bgImage.src = bgSrc;
 
-  // 立ち絵の更新
+  // 立ち絵更新
   const charaSrc = resolveAsset("chara", step.chara);
   if (charaSrc) {
     charaImage.src = charaSrc;
@@ -98,7 +193,7 @@ function renderStep(sceneName, index, skipTyping = false) {
     charaImage.style.display = "none";
   }
 
-  // 名前の更新
+  // 名前更新
   if (step.name) {
     charaName.textContent = step.name;
     nameBox.classList.remove("hidden");
@@ -107,18 +202,16 @@ function renderStep(sceneName, index, skipTyping = false) {
     nameBox.classList.add("hidden");
   }
 
-  // バックログへ追加（重複防止）
+  // ログ追加
   const lastLog = historyLog[historyLog.length - 1];
-  if (!lastLog || lastLog.scene !== sceneName || lastLog.index !== index) {
+  if (step.text && (!lastLog || lastLog.index !== index)) {
     historyLog.push({
-      scene: sceneName,
       index: index,
       name: step.name || "",
       text: step.text
     });
   }
 
-  // テキスト表示完了後の処理
   const onTextComplete = () => {
     isTyping = false;
     if (step.choices && step.choices.length > 0) {
@@ -126,9 +219,8 @@ function renderStep(sceneName, index, skipTyping = false) {
     }
   };
 
-  // タイプライター表示
   clearInterval(typingTimer);
-  if (skipTyping) {
+  if (skipTyping || !step.text) {
     messageText.textContent = step.text;
     onTextComplete();
     return;
@@ -151,13 +243,12 @@ function renderStep(sceneName, index, skipTyping = false) {
   }, TEXT_SPEED_MS);
 }
 
-// 次の行へ進む処理
 function advance() {
   if (!logModal.classList.contains("hidden")) return;
-  if (isChoosing) return; // 選択肢表示中は画面クリックで進めない
+  if (isChoosing) return;
 
-  const sceneList = GAME_SCENARIO[currentScene];
-  const step = sceneList[currentIndex];
+  const step = GAME_STEPS[currentIndex];
+  if (!step) return;
 
   if (isTyping) {
     clearInterval(typingTimer);
@@ -169,19 +260,14 @@ function advance() {
     return;
   }
 
-  // 現在の場面に次の行があれば進む
-  if (currentIndex < sceneList.length - 1) {
+  if (currentIndex < GAME_STEPS.length - 1) {
     currentIndex++;
-    renderStep(currentScene, currentIndex);
-  } else if (step.next) {
-    // 場面の最後で next が指定されていれば次の場面へ移動
-    jumpToScene(step.next);
+    renderStep(currentIndex);
   } else {
     showToast("最後のセリフです");
   }
 }
 
-// トースト通知
 let toastTimer = null;
 function showToast(msg) {
   toast.textContent = msg;
@@ -192,7 +278,6 @@ function showToast(msg) {
   }, 1800);
 }
 
-// クリック・キー操作
 gameContainer.addEventListener("click", advance);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" || e.key === " ") {
@@ -201,19 +286,13 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// save ボタン
 document.getElementById("btn-save").addEventListener("click", (e) => {
   e.stopPropagation();
-  const saveData = {
-    currentScene,
-    currentIndex,
-    historyLog
-  };
+  const saveData = { currentIndex, historyLog };
   localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
   showToast("セーブしました");
 });
 
-// Load ボタン
 document.getElementById("btn-load").addEventListener("click", (e) => {
   e.stopPropagation();
   const raw = localStorage.getItem(SAVE_KEY);
@@ -222,18 +301,12 @@ document.getElementById("btn-load").addEventListener("click", (e) => {
     return;
   }
   const saveData = JSON.parse(raw);
-  if (!saveData.currentScene || !GAME_SCENARIO[saveData.currentScene]) {
-    showToast("セーブデータを読み込めませんでした");
-    return;
-  }
-  currentScene = saveData.currentScene;
   currentIndex = saveData.currentIndex || 0;
   historyLog = saveData.historyLog || [];
-  renderStep(currentScene, currentIndex, true);
+  renderStep(currentIndex, true);
   showToast("ロードしました");
 });
 
-// log ボタン
 document.getElementById("btn-log").addEventListener("click", (e) => {
   e.stopPropagation();
   logList.innerHTML = historyLog.map(item => `
@@ -246,7 +319,6 @@ document.getElementById("btn-log").addEventListener("click", (e) => {
   logList.scrollTop = logList.scrollHeight;
 });
 
-// ログを閉じる
 document.getElementById("btn-close-log").addEventListener("click", (e) => {
   e.stopPropagation();
   logModal.classList.add("hidden");
@@ -255,5 +327,5 @@ logModal.addEventListener("click", (e) => {
   e.stopPropagation();
 });
 
-// 初期起動
-renderStep(currentScene, currentIndex);
+// 起動
+renderStep(currentIndex);

@@ -539,6 +539,12 @@
           continue;
         }
 
+        // タイトルへ戻るコマンド（@title または -> *title）
+        if (line === "@title" || line === "-> *title") {
+          steps.push({ type: "title" });
+          continue;
+        }
+
         if (line.startsWith("->")) {
           const target = line.slice(2).trim().replace(/^\*/, "");
           steps.push({ type: "jump", target });
@@ -631,6 +637,17 @@
     let isChoosing = false;
     let historyLog = [];
 
+    // タイトル画面に戻る
+    function returnToTitle() {
+      clearInterval(typingTimer);
+      isTyping = false;
+      hideChoices();
+      telopLayer.classList.add("hidden");
+      logModal.classList.add("hidden");
+      currentIndex = 0;
+      titleScreen.classList.remove("hidden");
+    }
+
     function renderChoices(choices) {
       isChoosing = true;
       choiceLayer.innerHTML = "";
@@ -665,6 +682,10 @@
     }
 
     function jumpToLabel(labelName) {
+      if (labelName === "title") {
+        returnToTitle();
+        return;
+      }
       if (!(labelName in GAME_LABELS)) {
         showToast(`飛び先「*${labelName}」が見つかりません`);
         return;
@@ -677,6 +698,10 @@
       let guard = 0;
       while (GAME_STEPS[index] && GAME_STEPS[index].type === "jump") {
         const target = GAME_STEPS[index].target;
+        if (target === "title") {
+          returnToTitle();
+          return;
+        }
         if (!(target in GAME_LABELS) || guard > 50) {
           showToast(`飛び先「*${target}」が見つかりません`);
           return;
@@ -687,8 +712,8 @@
       }
 
       const step = GAME_STEPS[index];
-      if (!step) {
-        showToast("最後のセリフです");
+      if (!step || step.type === "title") {
+        returnToTitle();
         return;
       }
 
@@ -696,7 +721,7 @@
       clearInterval(typingTimer);
       isTyping = false;
 
-      // 背景更新（@bg none や @bg hide なら画像を消して黒背景）
+      // 背景更新
       const bgSrc = resolveAsset("bg", step.bg);
       if (bgSrc) {
         bgImage.src = bgSrc;
@@ -797,7 +822,10 @@
       if (isChoosing) return;
 
       const step = GAME_STEPS[currentIndex];
-      if (!step) return;
+      if (!step) {
+        returnToTitle();
+        return;
+      }
 
       if (isTyping) {
         clearInterval(typingTimer);
@@ -813,7 +841,8 @@
         currentIndex++;
         renderStep(currentIndex);
       } else {
-        showToast("最後のセリフです");
+        // 最後のセリフを表示し終わったあとにクリックしたらタイトルへ戻る
+        returnToTitle();
       }
     }
 

@@ -54,11 +54,9 @@ const GAME_ASSETS = {
   bg: {
     title: DUMMY_BG,        // タイトル画面の背景（例: "./images/bg_title.png"）
     street: DUMMY_BG,       // 通学路の背景（例: "./images/bg_street.png"）
-    none: "",               // 真っ黒な画面にしたいとき用
   },
   chara: {
     ine: DUMMY_CHARA,       // 稲の立ち絵（例: "./images/chara_ine.png"）
-    none: "",               // 立ち絵を消すとき用
   },
   ui: {
     titleLogo: "",          // タイトルロゴ画像を使う場合（例: "./images/logo.png"）
@@ -69,41 +67,35 @@ const GAME_ASSETS = {
 // 3. メッセージ・選択肢・演出（1行ずつ並べて編集）
 // ==========================================
 const SCRIPT_TEXT = `
-@bg none
-@chara none
+@bg off
+@chara off
 ## 第一章 はじまりの朝
 
 @bg street
 @chara ine
 # 稲
 ここにテキストを入力
-「## 第一章」のようにシャープを2つ書くと、ウィンドウが消えて画面中央に大きく章タイトルが出ます。
-次のセリフに進むと、メッセージウィンドウが自動で戻ります。
+次のクリックで、キャラクターだけを消してみます。
 
-// ▼ 背景だけを見せたいときの例（@ui hide でウィンドウを消す）
-@ui hide
-（ウィンドウだけを消して背景や立ち絵を見せることもできます）
+@chara off
+キャラクターが消えました！（「@chara」だけの空白でも消えます）
 
-@ui show
-# 稲
+@chara ine
+キャラクターを戻しました！次はメッセージウィンドウだけを消して背景とキャラを見せます。
+
+@ui off
+@ui on
 ウィンドウを戻しました！どちらの道に進みますか？
 ? 右の道へ進む -> *route_1 | 左の道へ進む -> *route_2
 
 *route_1
 右の道を選びました。
--> *chapter2
+-> *ending
 
 *route_2
 左の道を選びました。
--> *chapter2
+-> *ending
 
-*chapter2
-@bg none
-@chara none
-## 第二章 つづく物語
-
-@bg street
-@chara ine
-# 稲
-このようにストーリーの途中で何度でも章タイトルを入れられます。
+*ending
+最後のセリフです。もう一回クリックするとタイトルに戻ります。
 `;

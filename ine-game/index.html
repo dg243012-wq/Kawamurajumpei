@@ -458,7 +458,7 @@
   <script src="./scenario.js"></script>
 
   <script>
-    const SAVE_KEY = "novel_game_save_v5";
+    const SAVE_KEY = "novel_game_save_v6";
     const TEXT_SPEED_MS = 30;
 
     const gameContainer = document.getElementById("game-container");
@@ -489,7 +489,7 @@
     }
 
     function resolveAsset(type, key) {
-      if (!key || key === "none" || key === "hide") return "";
+      if (!key || key === "none" || key === "hide" || key === "off") return "";
       if (GAME_ASSETS[type] && key in GAME_ASSETS[type]) {
         return GAME_ASSETS[type][key];
       }
@@ -528,47 +528,91 @@
       let currentChara = "";
       let currentName = "";
       let currentUiHidden = false;
+      let pendingUiPause = false;
+
+      // @ui off のあとにセリフが無いまま切り替わる場合、1クリック待機を挿入する
+      const flushUiPauseIfNeeded = () => {
+        if (pendingUiPause) {
+          steps.push({
+            type: "pause",
+            bg: currentBg,
+            chara: currentChara,
+            uiHidden: true
+          });
+          pendingUiPause = false;
+        }
+      };
 
       for (let rawLine of lines) {
         const line = rawLine.trim();
         if (!line || line.startsWith("//")) continue;
 
+        // ラベル定義 (*label)
         if (line.startsWith("*")) {
+          flushUiPauseIfNeeded();
           const labelName = line.slice(1).trim();
           labels[labelName] = steps.length;
           continue;
         }
 
-        // タイトルへ戻るコマンド（@title または -> *title）
+        // タイトルへ戻るコマンド
         if (line === "@title" || line === "-> *title") {
+          flushUiPauseIfNeeded();
           steps.push({ type: "title" });
           continue;
         }
 
+        // 無条件ジャンプ (-> *label)
         if (line.startsWith("->")) {
+          flushUiPauseIfNeeded();
           const target = line.slice(2).trim().replace(/^\*/, "");
           steps.push({ type: "jump", target });
           continue;
         }
 
-        if (line.startsWith("@bg ")) {
-          currentBg = line.slice(4).trim();
+        // クリック待機コマンド (@wait)
+        if (line === "@wait") {
+          pendingUiPause = false;
+          steps.push({
+            type: "pause",
+            bg: currentBg,
+            chara: currentChara,
+            uiHidden: currentUiHidden
+          });
           continue;
         }
 
-        if (line.startsWith("@chara ")) {
-          currentChara = line.slice(7).trim();
+        // 背景変更 (@bg name / @bg off / @bg だけの空白)
+        if (line === "@bg" || line.startsWith("@bg ")) {
+          const val = line.slice(3).trim();
+          currentBg = (val === "off" || val === "none" || val === "hide") ? "" : val;
           continue;
         }
 
-        if (line.startsWith("@ui ")) {
-          const mode = line.slice(4).trim();
-          currentUiHidden = (mode === "hide" || mode === "none" || mode === "off");
+        // キャラ変更 (@chara name / @chara off / @chara だけの空白)
+        if (line === "@chara" || line.startsWith("@chara ")) {
+          const val = line.slice(6).trim();
+          currentChara = (val === "off" || val === "none" || val === "hide") ? "" : val;
+          continue;
+        }
+
+        // メッセージウィンドウ表示オンオフ (@ui on / @ui off)
+        if (line === "@ui" || line.startsWith("@ui ")) {
+          const mode = line.slice(3).trim();
+          const nextHidden = (mode === "" || mode === "hide" || mode === "none" || mode === "off");
+          if (currentUiHidden && !nextHidden) {
+            flushUiPauseIfNeeded();
+          }
+          currentUiHidden = nextHidden;
+          if (currentUiHidden) {
+            pendingUiPause = true;
+          }
           continue;
         }
 
         // 章タイトル・中央テロップ（## 見出し）
         if (line.startsWith("##")) {
+          pendingUiPause = false;
           const text = line.slice(2).trim();
           steps.push({
             type: "telop",
@@ -579,14 +623,16 @@
           continue;
         }
 
-        // 名前変更（# 名前）
-        if (line.startsWith("#")) {
-          currentName = line.slice(1).trim();
+        // 名前変更（# 名前 / # off / # だけの空白）
+        if (line === "#" || line.startsWith("# ")) {
+          const val = line.slice(1).trim();
+          currentName = (val === "off" || val === "none" || val === "hide") ? "" : val;
           continue;
         }
 
         // 選択肢
         if (line.startsWith("?")) {
+          pendingUiPause = false;
           const choiceStr = line.slice(1).trim();
           const choices = choiceStr.split("|").map(part => {
             const [label, targetRaw] = part.split("->");
@@ -614,6 +660,7 @@
         }
 
         // 通常セリフ
+        pendingUiPause = false;
         steps.push({
           type: "say",
           name: currentName,
@@ -625,6 +672,7 @@
         });
       }
 
+      flushUiPauseIfNeeded();
       return { steps, labels };
     }
 
@@ -637,7 +685,6 @@
     let isChoosing = false;
     let historyLog = [];
 
-    // タイトル画面に戻る
     function returnToTitle() {
       clearInterval(typingTimer);
       isTyping = false;
@@ -739,6 +786,17 @@
         charaImage.style.display = "none";
       }
 
+      // クリック待機（@ui off 単体や @wait）の場合
+      if (step.type === "pause") {
+        telopLayer.classList.add("hidden");
+        if (step.uiHidden) {
+          uiLayer.classList.add("hidden");
+        } else {
+          uiLayer.classList.remove("hidden");
+        }
+        return;
+      }
+
       // 章タイトル・中央テロップ（##）の場合
       if (step.type === "telop") {
         uiLayer.classList.add("hidden");
@@ -816,7 +874,6 @@
     }
 
     function advance() {
-      // タイトル画面やログ画面が開いているときは進めない
       if (!titleScreen.classList.contains("hidden")) return;
       if (!logModal.classList.contains("hidden")) return;
       if (isChoosing) return;
@@ -841,7 +898,6 @@
         currentIndex++;
         renderStep(currentIndex);
       } else {
-        // 最後のセリフを表示し終わったあとにクリックしたらタイトルへ戻る
         returnToTitle();
       }
     }
@@ -856,7 +912,6 @@
       }, 1800);
     }
 
-    // タイトル画面「最初から」ボタン
     document.getElementById("btn-start").addEventListener("click", (e) => {
       e.stopPropagation();
       currentIndex = 0;
@@ -865,7 +920,6 @@
       renderStep(currentIndex);
     });
 
-    // タイトル画面「続きから」ボタン
     document.getElementById("btn-continue").addEventListener("click", (e) => {
       e.stopPropagation();
       const raw = localStorage.getItem(SAVE_KEY);
@@ -881,7 +935,6 @@
       showToast("ロードしました");
     });
 
-    // ゲーム進行操作
     gameContainer.addEventListener("click", advance);
     document.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -890,7 +943,6 @@
       }
     });
 
-    // save ボタン
     document.getElementById("btn-save").addEventListener("click", (e) => {
       e.stopPropagation();
       const saveData = { currentIndex, historyLog };
@@ -898,7 +950,6 @@
       showToast("セーブしました");
     });
 
-    // Load ボタン
     document.getElementById("btn-load").addEventListener("click", (e) => {
       e.stopPropagation();
       const raw = localStorage.getItem(SAVE_KEY);
@@ -913,7 +964,6 @@
       showToast("ロードしました");
     });
 
-    // log ボタン
     document.getElementById("btn-log").addEventListener("click", (e) => {
       e.stopPropagation();
       logList.innerHTML = historyLog.map(item => `
@@ -934,7 +984,6 @@
       e.stopPropagation();
     });
 
-    // 起動時はタイトル画面を表示
     initTitleScreen();
   </script>
 </body>

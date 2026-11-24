@@ -127,21 +127,24 @@
       z-index: 1;
     }
 
-    /* キャラクター立ち絵 */
+    /* キャラクター立ち絵レイヤー */
     #chara-layer {
       position: absolute;
       inset: 0;
-      display: flex;
-      justify-content: center;
-      align-items: flex-end;
       z-index: 2;
       pointer-events: none;
+      overflow: hidden;
     }
 
-    #chara-image {
+    /* 動的に生成されるキャラクターオブジェクト */
+    .chara-obj {
+      position: absolute;
+      bottom: 0;
       height: 88%;
-      max-width: 90%;
+      width: auto;
+      max-width: none;
       object-fit: contain;
+      will-change: left, transform, opacity;
     }
 
     /* 章タイトル・中央テロップ（## 用） */
@@ -487,9 +490,8 @@
     <!-- ==================== ゲーム画面 ==================== -->
     <img id="bg-image" src="" alt="">
 
-    <div id="chara-layer">
-      <img id="chara-image" src="" alt="">
-    </div>
+    <!-- キャラクターオブジェクト生成レイヤー -->
+    <div id="chara-layer"></div>
 
     <!-- 章タイトル・中央テロップ -->
     <div id="telop-layer" class="hidden">
@@ -547,8 +549,10 @@
   <script src="./scenario.js"></script>
 
   <script>
-    const SAVE_KEY = "novel_game_save_v7";
+    const SAVE_KEY = "novel_game_save_v8";
     const TEXT_SPEED_MS = 30;
+    const SLIDE_DURATION_MS = 500; // スライド移動にかかる時間（ミリ秒）
+    const FADE_DURATION_MS = 280;  // 無からの出現・消滅にかかる時間（ミリ秒）
 
     const gameContainer = document.getElementById("game-container");
     const titleScreen = document.getElementById("title-screen");
@@ -558,7 +562,7 @@
     const titleLogoImg = document.getElementById("title-logo-img");
 
     const bgImage = document.getElementById("bg-image");
-    const charaImage = document.getElementById("chara-image");
+    const charaLayer = document.getElementById("chara-layer");
     const telopLayer = document.getElementById("telop-layer");
     const telopText = document.getElementById("telop-text");
     const choiceLayer = document.getElementById("choice-layer");
@@ -583,14 +587,347 @@
     const GLOSSARY_DATA = (typeof GAME_GLOSSARY !== "undefined" && GAME_GLOSSARY) ? GAME_GLOSSARY : {};
 
     function resolveAsset(type, key) {
-      if (!key || key === "none" || key === "hide" || key === "off") return "";
+      if (!key || key === "none" || key === "hide" || key === "off" || key === "無") return "";
       if (GAME_ASSETS[type] && key in GAME_ASSETS[type]) {
         return GAME_ASSETS[type][key];
       }
       return key;
     }
 
-    // 用語解説ウィンドウを開く
+    // ==================== キャラクター位置・オブジェクト管理 ====================
+    // 位置名を内部コードに正規化
+    function normalizePos(raw) {
+      if (!raw) return "center";
+      const s = raw.trim();
+      if (s === "中心" || s === "中央" || s === "center") return "center";
+      if (s === "右" || s === "right") return "right";
+      if (s === "左" || s === "left") return "left";
+      if (s === "右画面外" || s === "out_right") return "out_right";
+      if (s === "左画面外" || s === "out_left") return "out_left";
+      if (s === "無" || s === "none" || s === "off" || s === "hide") return "none";
+      return null;
+    }
+
+    function isOffscreenPos(pos) {
+      return pos === "out_left" || pos === "out_right";
+    }
+
+    function isVisibleOnScreenPos(pos) {
+      return pos === "center" || pos === "left" || pos === "right";
+    }
+
+    // 各位置のCSS座標（left と translateX）
+    function getPosStyle(pos) {
+      switch (pos) {
+        case "out_left":
+          // 要素の右端が画面左端（0%）に一致＝完全に左画面外
+          return { left: "0%", transform: "translateX(-100%)" };
+        case "left":
+          return { left: "25%", transform: "translateX(-50%)" };
+        case "center":
+          return { left: "50%", transform: "translateX(-50%)" };
+        case "right":
+          return { left: "75%", transform: "translateX(-50%)" };
+        case "out_right":
+          // 要素の左端が画面右端（100%）に一致＝完全に右画面外
+          return { left: "100%", transform: "translateX(0%)" };
+        default:
+          return { left: "50%", transform: "translateX(-50%)" };
+      }
+    }
+
+    // @chara / @move コマンドの引数を解析
+    function parseCharaDirective(argStr, prevCharaKey) {
+      const trimmed = argStr.trim();
+      if (!trimmed || trimmed === "無" || trimmed === "off" || trimmed === "none" || trimmed === "hide") {
+        return { key: "", from: null, to: "none", explicitFrom: false };
+      }
+
+      // 「->」が含まれている場合（A地点 -> B地点）
+      if (trimmed.includes("->")) {
+        const [leftPart, rightPart] = trimmed.split("->");
+        const tokens = leftPart.trim().split(/\s+/).filter(Boolean);
+        let key = prevCharaKey;
+        let fromRaw = "";
+
+        if (tokens.length === 1) {
+          const maybePos = normalizePos(tokens[0]);
+          if (maybePos) {
+            fromRaw = tokens[0];
+          } else {
+            key = tokens[0];
+          }
+        } else if (tokens.length >= 2) {
+          key = tokens[0];
+          fromRaw = tokens[1];
+        }
+
+        const fromPos = fromRaw ? (normalizePos(fromRaw) || "center") : null;
+        const toPos = normalizePos(rightPart.trim()) || "center";
+        return {
+          key,
+          from: fromPos,
+          to: toPos,
+          explicitFrom: Boolean(fromPos)
+        };
+      }
+
+      // 「->」がない場合（例: "ine" や "ine 右" や "右"）
+      const tokens = trimmed.split(/\s+/).filter(Boolean);
+      if (tokens.length === 1) {
+        const maybePos = normalizePos(tokens[0]);
+        if (maybePos) {
+          return {
+            key: maybePos === "none" ? "" : prevCharaKey,
+            from: null,
+            to: maybePos,
+            explicitFrom: false
+          };
+        }
+        // キャラ名のみ指定 → デフォルトは「中心」
+        return {
+          key: tokens[0],
+          from: null,
+          to: "center",
+          explicitFrom: false
+        };
+      } else {
+        const key = tokens[0];
+        const toPos = normalizePos(tokens[1]) || "center";
+        return {
+          key: toPos === "none" ? "" : key,
+          from: null,
+          to: toPos,
+          explicitFrom: false
+        };
+      }
+    }
+
+    // 現在アクティブなキャラクターオブジェクト状態
+    let activeCharaEl = null;
+    let activeCharaSrc = "";
+    let activeCharaPos = "none";
+
+    function removeElementSafely(el) {
+      if (el && el.parentNode) {
+        el.parentNode.removeChild(el);
+      }
+    }
+
+    function clearAllCharaObjects() {
+      charaLayer.innerHTML = "";
+      activeCharaEl = null;
+      activeCharaSrc = "";
+      activeCharaPos = "none";
+    }
+
+    function createCharaElement(src, pos, opacity = 1) {
+      const img = document.createElement("img");
+      img.src = src;
+      img.alt = "";
+      img.className = "chara-obj";
+      const st = getPosStyle(pos);
+      img.style.transition = "none";
+      img.style.left = st.left;
+      img.style.transform = st.transform;
+      img.style.opacity = String(opacity);
+      charaLayer.appendChild(img);
+      return img;
+    }
+
+    // キャラクターの配置・移動・生成・消去を実行
+    function updateCharacterObject(step, immediate = false) {
+      const src = resolveAsset("chara", step.chara);
+      const explicitFrom = step.charaExplicitFrom ? step.charaFrom : null;
+      const toPos = step.charaTo || (src ? "center" : "none");
+
+      // 画像が未設定かつ移動先が無の場合
+      if (!src && toPos === "none" && !activeCharaEl) {
+        clearAllCharaObjects();
+        return;
+      }
+
+      // ロード時や即時反映時（アニメーションなし）
+      if (immediate) {
+        clearAllCharaObjects();
+        if (src && isVisibleOnScreenPos(toPos)) {
+          activeCharaEl = createCharaElement(src, toPos, 1);
+          activeCharaSrc = src;
+          activeCharaPos = toPos;
+        }
+        return;
+      }
+
+      // 実行中の退場アニメーション要素があれば先に片付ける
+      Array.from(charaLayer.children).forEach(child => {
+        if (child !== activeCharaEl) {
+          removeElementSafely(child);
+        }
+      });
+
+      // 実質的なA地点（出発地点）を決定
+      const fromPos = explicitFrom || (activeCharaEl ? activeCharaPos : "none");
+
+      // --- パターン1：B地点が「無」の場合（オブジェクトを消す） ---
+      if (toPos === "none") {
+        if (!activeCharaEl) {
+          clearAllCharaObjects();
+          return;
+        }
+        const dyingEl = activeCharaEl;
+        activeCharaEl = null;
+        activeCharaSrc = "";
+        activeCharaPos = "none";
+
+        // A地点が明示されていたら一旦そこに置いてから消す
+        if (explicitFrom && isVisibleOnScreenPos(explicitFrom)) {
+          const st = getPosStyle(explicitFrom);
+          dyingEl.style.transition = "none";
+          dyingEl.style.left = st.left;
+          dyingEl.style.transform = st.transform;
+          void dyingEl.offsetWidth;
+        }
+
+        dyingEl.style.transition = `opacity ${FADE_DURATION_MS}ms ease`;
+        dyingEl.style.opacity = "0";
+        setTimeout(() => removeElementSafely(dyingEl), FADE_DURATION_MS + 30);
+        return;
+      }
+
+      if (!src) {
+        clearAllCharaObjects();
+        return;
+      }
+
+      // --- パターン2：A地点が「画面外」（左画面外 / 右画面外）の場合 ---
+      // → 新しくオブジェクトを画面外に生み出し、B地点へスライドさせる
+      if (isOffscreenPos(fromPos)) {
+        if (activeCharaEl) {
+          removeElementSafely(activeCharaEl);
+          activeCharaEl = null;
+        }
+
+        const newEl = createCharaElement(src, fromPos, 1);
+        void newEl.offsetWidth; // A地点をブラウザに確定させる
+
+        // B地点も画面外の場合はスライド後に出きったタイミングで消去
+        if (isOffscreenPos(toPos)) {
+          activeCharaEl = null;
+          activeCharaSrc = "";
+          activeCharaPos = "none";
+
+          const endSt = getPosStyle(toPos);
+          newEl.style.transition = `left ${SLIDE_DURATION_MS}ms ease, transform ${SLIDE_DURATION_MS}ms ease`;
+          newEl.style.left = endSt.left;
+          newEl.style.transform = endSt.transform;
+
+          let removed = false;
+          const cleanup = () => {
+            if (removed) return;
+            removed = true;
+            removeElementSafely(newEl);
+          };
+          newEl.addEventListener("transitionend", cleanup, { once: true });
+          setTimeout(cleanup, SLIDE_DURATION_MS + 60);
+        } else {
+          // B地点（中心・右・左）へスライドイン
+          activeCharaEl = newEl;
+          activeCharaSrc = src;
+          activeCharaPos = toPos;
+
+          const endSt = getPosStyle(toPos);
+          newEl.style.transition = `left ${SLIDE_DURATION_MS}ms ease, transform ${SLIDE_DURATION_MS}ms ease`;
+          newEl.style.left = endSt.left;
+          newEl.style.transform = endSt.transform;
+        }
+        return;
+      }
+
+      // --- パターン3：A地点が「無」の場合 ---
+      // → 新しくオブジェクトを生み出す
+      if (fromPos === "none") {
+        if (activeCharaEl) {
+          removeElementSafely(activeCharaEl);
+          activeCharaEl = null;
+        }
+
+        if (isOffscreenPos(toPos)) {
+          // 無 -> 画面外（画面外はもともと見えないので存在しない状態のまま）
+          activeCharaEl = null;
+          activeCharaSrc = "";
+          activeCharaPos = "none";
+          return;
+        }
+
+        // B地点（中心・右・左）に新しいオブジェクトを生み出す
+        const newEl = createCharaElement(src, toPos, 0);
+        void newEl.offsetWidth;
+        newEl.style.transition = `opacity ${FADE_DURATION_MS}ms ease`;
+        newEl.style.opacity = "1";
+
+        activeCharaEl = newEl;
+        activeCharaSrc = src;
+        activeCharaPos = toPos;
+        return;
+      }
+
+      // --- パターン4：A地点が画面内（中心・右・左）の場合 ---
+      let targetEl = activeCharaEl;
+
+      // まだオブジェクトが存在しない、または明示的にA地点から生み直す場合
+      if (!targetEl) {
+        targetEl = createCharaElement(src, fromPos, 1);
+      } else {
+        // 画像差分が変わっていれば差し替え
+        if (activeCharaSrc !== src) {
+          targetEl.src = src;
+        }
+        // A地点が明示されていて現在位置と異なる場合は一度A地点へ配置
+        if (explicitFrom && activeCharaPos !== explicitFrom) {
+          const startSt = getPosStyle(explicitFrom);
+          targetEl.style.transition = "none";
+          targetEl.style.left = startSt.left;
+          targetEl.style.transform = startSt.transform;
+        }
+      }
+
+      void targetEl.offsetWidth; // A地点を確定
+
+      // B地点が「画面外」の場合 → スライドし、完全に画面外に出たタイミングで消去
+      if (isOffscreenPos(toPos)) {
+        activeCharaEl = null;
+        activeCharaSrc = "";
+        activeCharaPos = "none";
+
+        const endSt = getPosStyle(toPos);
+        targetEl.style.transition = `left ${SLIDE_DURATION_MS}ms ease, transform ${SLIDE_DURATION_MS}ms ease`;
+        targetEl.style.left = endSt.left;
+        targetEl.style.transform = endSt.transform;
+
+        let removed = false;
+        const cleanup = () => {
+          if (removed) return;
+          removed = true;
+          removeElementSafely(targetEl);
+        };
+        targetEl.addEventListener("transitionend", cleanup, { once: true });
+        setTimeout(cleanup, SLIDE_DURATION_MS + 60);
+        return;
+      }
+
+      // B地点が画面内（中心・右・左）の場合 → A地点からB地点へスライド移動
+      activeCharaEl = targetEl;
+      activeCharaSrc = src;
+      activeCharaPos = toPos;
+
+      const endSt = getPosStyle(toPos);
+      targetEl.style.transition = `left ${SLIDE_DURATION_MS}ms ease, transform ${SLIDE_DURATION_MS}ms ease, opacity ${FADE_DURATION_MS}ms ease`;
+      targetEl.style.left = endSt.left;
+      targetEl.style.transform = endSt.transform;
+      targetEl.style.opacity = "1";
+    }
+
+    // ==================== 用語解説ウィンドウ ====================
     function openGlossary(key, fallbackLabel = "") {
       const title = key || fallbackLabel;
       const desc = GLOSSARY_DATA[key] || GLOSSARY_DATA[fallbackLabel] || "（この単語の説明はまだ登録されていません）";
@@ -599,12 +936,10 @@
       glossaryModal.classList.remove("hidden");
     }
 
-    // 用語解説ウィンドウを閉じる
     function closeGlossary() {
       glossaryModal.classList.add("hidden");
     }
 
-    // [[単語]] や [[表示文字|辞書名]] を解析して要素の配列に分ける
     function parseMessageSegments(rawText) {
       if (!rawText) return [];
       const segments = [];
@@ -640,7 +975,6 @@
       return segments;
     }
 
-    // コンテナ内に文章と色付き単語を生成する（バックログでも共通利用）
     function buildRichTextNodes(container, rawText) {
       container.innerHTML = "";
       const segments = parseMessageSegments(rawText);
@@ -666,7 +1000,7 @@
       return items;
     }
 
-    // タイトル画面の初期セットアップ
+    // ==================== タイトル画面 ====================
     function initTitleScreen() {
       if (typeof GAME_TITLE !== "undefined" && GAME_TITLE) {
         titleText.textContent = GAME_TITLE;
@@ -688,7 +1022,7 @@
       }
     }
 
-    // シナリオ解析
+    // ==================== シナリオ解析 ====================
     function parseScenario(rawText) {
       const lines = rawText.split(/\r?\n/);
       const steps = [];
@@ -696,17 +1030,41 @@
 
       let currentBg = "";
       let currentChara = "";
+      let pendingCharaFrom = null;
+      let pendingCharaExplicitFrom = false;
+      let currentCharaTo = "none";
       let currentName = "";
       let currentUiHidden = false;
       let pendingUiPause = false;
+      let pendingCharaMove = false;
 
-      const flushUiPauseIfNeeded = () => {
-        if (pendingUiPause) {
+      // 次のステップにキャラ情報を引き渡すヘルパー
+      const consumeCharaState = () => {
+        const state = {
+          chara: currentChara,
+          charaFrom: pendingCharaFrom,
+          charaExplicitFrom: pendingCharaExplicitFrom,
+          charaTo: currentCharaTo
+        };
+        // 一度移動・出現を消費したら、次の行では現在位置に留まるようにリセット
+        pendingCharaFrom = null;
+        pendingCharaExplicitFrom = false;
+        pendingCharaMove = false;
+        if (isOffscreenPos(currentCharaTo) || currentCharaTo === "none") {
+          currentCharaTo = "none";
+          if (currentCharaTo === "none") currentChara = "";
+        }
+        return state;
+      };
+
+      const flushPendingPauseIfNeeded = () => {
+        if (pendingUiPause || pendingCharaMove) {
+          const charaState = consumeCharaState();
           steps.push({
             type: "pause",
             bg: currentBg,
-            chara: currentChara,
-            uiHidden: true
+            ...charaState,
+            uiHidden: currentUiHidden
           });
           pendingUiPause = false;
         }
@@ -717,20 +1075,20 @@
         if (!line || line.startsWith("//")) continue;
 
         if (line.startsWith("*")) {
-          flushUiPauseIfNeeded();
+          flushPendingPauseIfNeeded();
           const labelName = line.slice(1).trim();
           labels[labelName] = steps.length;
           continue;
         }
 
         if (line === "@title" || line === "-> *title") {
-          flushUiPauseIfNeeded();
+          flushPendingPauseIfNeeded();
           steps.push({ type: "title" });
           continue;
         }
 
         if (line.startsWith("->")) {
-          flushUiPauseIfNeeded();
+          flushPendingPauseIfNeeded();
           const target = line.slice(2).trim().replace(/^\*/, "");
           steps.push({ type: "jump", target });
           continue;
@@ -738,10 +1096,11 @@
 
         if (line === "@wait") {
           pendingUiPause = false;
+          const charaState = consumeCharaState();
           steps.push({
             type: "pause",
             bg: currentBg,
-            chara: currentChara,
+            ...charaState,
             uiHidden: currentUiHidden
           });
           continue;
@@ -749,21 +1108,30 @@
 
         if (line === "@bg" || line.startsWith("@bg ")) {
           const val = line.slice(3).trim();
-          currentBg = (val === "off" || val === "none" || val === "hide") ? "" : val;
+          currentBg = (val === "off" || val === "none" || val === "hide" || val === "無") ? "" : val;
           continue;
         }
 
-        if (line === "@chara" || line.startsWith("@chara ")) {
-          const val = line.slice(6).trim();
-          currentChara = (val === "off" || val === "none" || val === "hide") ? "" : val;
+        // @chara または @move コマンド
+        if (line === "@chara" || line.startsWith("@chara ") || line.startsWith("@move ")) {
+          if (pendingCharaMove) {
+            flushPendingPauseIfNeeded();
+          }
+          const arg = line.startsWith("@move ") ? line.slice(6) : line.slice(6);
+          const parsed = parseCharaDirective(arg, currentChara);
+          currentChara = parsed.key;
+          pendingCharaFrom = parsed.from;
+          pendingCharaExplicitFrom = parsed.explicitFrom;
+          currentCharaTo = parsed.to;
+          pendingCharaMove = true;
           continue;
         }
 
         if (line === "@ui" || line.startsWith("@ui ")) {
           const mode = line.slice(3).trim();
-          const nextHidden = (mode === "" || mode === "hide" || mode === "none" || mode === "off");
+          const nextHidden = (mode === "" || mode === "hide" || mode === "none" || mode === "off" || mode === "無");
           if (currentUiHidden && !nextHidden) {
-            flushUiPauseIfNeeded();
+            flushPendingPauseIfNeeded();
           }
           currentUiHidden = nextHidden;
           if (currentUiHidden) {
@@ -775,18 +1143,19 @@
         if (line.startsWith("##")) {
           pendingUiPause = false;
           const text = line.slice(2).trim();
+          const charaState = consumeCharaState();
           steps.push({
             type: "telop",
             text,
             bg: currentBg,
-            chara: currentChara
+            ...charaState
           });
           continue;
         }
 
         if (line === "#" || line.startsWith("# ")) {
           const val = line.slice(1).trim();
-          currentName = (val === "off" || val === "none" || val === "hide") ? "" : val;
+          currentName = (val === "off" || val === "none" || val === "hide" || val === "無") ? "" : val;
           continue;
         }
 
@@ -805,12 +1174,13 @@
           if (prevStep && prevStep.type === "say") {
             prevStep.choices = choices;
           } else {
+            const charaState = consumeCharaState();
             steps.push({
               type: "say",
               name: currentName,
               text: "",
               bg: currentBg,
-              chara: currentChara,
+              ...charaState,
               uiHidden: currentUiHidden,
               choices
             });
@@ -818,19 +1188,21 @@
           continue;
         }
 
+        // 通常セリフ
         pendingUiPause = false;
+        const charaState = consumeCharaState();
         steps.push({
           type: "say",
           name: currentName,
           text: line,
           bg: currentBg,
-          chara: currentChara,
+          ...charaState,
           uiHidden: currentUiHidden,
           choices: null
         });
       }
 
-      flushUiPauseIfNeeded();
+      flushPendingPauseIfNeeded();
       return { steps, labels };
     }
 
@@ -855,6 +1227,7 @@
       clearInterval(typingTimer);
       isTyping = false;
       hideChoices();
+      clearAllCharaObjects();
       telopLayer.classList.add("hidden");
       logModal.classList.add("hidden");
       closeGlossary();
@@ -944,14 +1317,8 @@
         bgImage.style.display = "none";
       }
 
-      // 立ち絵更新
-      const charaSrc = resolveAsset("chara", step.chara);
-      if (charaSrc) {
-        charaImage.src = charaSrc;
-        charaImage.style.display = "block";
-      } else {
-        charaImage.style.display = "none";
-      }
+      // キャラクター位置・移動・生成・消去の更新
+      updateCharacterObject(step, skipTyping);
 
       // クリック待機
       if (step.type === "pause") {
@@ -1015,7 +1382,6 @@
         }
       };
 
-      // 色付き単語を含んだDOM要素を組み立てる
       currentTypingItems = buildRichTextNodes(messageText, step.text);
       const totalChars = currentTypingItems.reduce((sum, item) => sum + item.fullText.length, 0);
 
@@ -1024,7 +1390,6 @@
         return;
       }
 
-      // 一旦すべて空文字にして1文字ずつ表示する
       for (const item of currentTypingItems) {
         item.node.textContent = "";
       }
@@ -1056,7 +1421,6 @@
     }
 
     function advance() {
-      // モーダルやタイトル画面が開いているときは本編を進めない
       if (!glossaryModal.classList.contains("hidden")) return;
       if (!titleScreen.classList.contains("hidden")) return;
       if (!logModal.classList.contains("hidden")) return;
@@ -1099,6 +1463,7 @@
       e.stopPropagation();
       currentIndex = 0;
       historyLog = [];
+      clearAllCharaObjects();
       titleScreen.classList.add("hidden");
       renderStep(currentIndex);
     });
@@ -1187,7 +1552,6 @@
       e.stopPropagation();
     });
 
-    // 用語解説ウィンドウを閉じる操作
     document.getElementById("btn-close-glossary").addEventListener("click", (e) => {
       e.stopPropagation();
       closeGlossary();

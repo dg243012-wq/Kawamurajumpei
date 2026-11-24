@@ -261,6 +261,23 @@
       width: 100%;
     }
 
+    /* クリックできる用語（色付き単語） */
+    .glossary-word {
+      color: #0055cc;
+      text-decoration: underline;
+      text-decoration-thickness: max(2px, calc(var(--w) * 0.0022));
+      text-underline-offset: 0.16em;
+      cursor: pointer;
+      padding: 0 2px;
+      border-radius: 3px;
+      transition: background-color 0.15s, color 0.15s;
+    }
+
+    .glossary-word:hover {
+      background-color: #0055cc;
+      color: #ffffff;
+    }
+
     /* 右下メニュー（save | Load | log） */
     #menu-box {
       position: absolute;
@@ -308,7 +325,7 @@
       font-size: calc(var(--w) * 0.016);
       font-weight: bold;
       padding: calc(var(--h) * 0.015) calc(var(--w) * 0.02);
-      z-index: 60;
+      z-index: 70;
       pointer-events: none;
     }
 
@@ -384,6 +401,67 @@
       white-space: pre-wrap;
     }
 
+    /* ==================== 用語解説モーダル ==================== */
+    #glossary-modal {
+      position: absolute;
+      inset: 0;
+      background-color: rgba(0, 0, 0, 0.7);
+      z-index: 65;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: default;
+    }
+
+    #glossary-panel {
+      width: 68%;
+      max-height: 68%;
+      background-color: #ffffff;
+      border: var(--border-w) solid #000000;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #glossary-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: calc(var(--h) * 0.022) calc(var(--w) * 0.025);
+      border-bottom: var(--border-w) solid #000000;
+      background-color: #f4f7fb;
+    }
+
+    #glossary-title {
+      font-size: calc(var(--w) * 0.026);
+      font-weight: 900;
+      color: #0055cc;
+    }
+
+    #btn-close-glossary {
+      background-color: #ffffff;
+      border: var(--border-w) solid #000000;
+      font-family: inherit;
+      font-size: calc(var(--w) * 0.017);
+      font-weight: 900;
+      padding: calc(var(--h) * 0.008) calc(var(--w) * 0.018);
+      cursor: pointer;
+    }
+
+    #btn-close-glossary:hover {
+      background-color: #000000;
+      color: #ffffff;
+    }
+
+    #glossary-body {
+      padding: calc(var(--h) * 0.035) calc(var(--w) * 0.028);
+      overflow-y: auto;
+      font-size: calc(var(--w) * 0.021);
+      font-weight: bold;
+      color: #000000;
+      line-height: 1.7;
+      white-space: pre-wrap;
+    }
+
     .hidden {
       display: none !important;
     }
@@ -453,12 +531,23 @@
         <div id="log-list"></div>
       </div>
     </div>
+
+    <!-- 用語解説ウィンドウ -->
+    <div id="glossary-modal" class="hidden">
+      <div id="glossary-panel">
+        <div id="glossary-header">
+          <span id="glossary-title"></span>
+          <button type="button" id="btn-close-glossary">閉じる</button>
+        </div>
+        <div id="glossary-body"></div>
+      </div>
+    </div>
   </div>
 
   <script src="./scenario.js"></script>
 
   <script>
-    const SAVE_KEY = "novel_game_save_v6";
+    const SAVE_KEY = "novel_game_save_v7";
     const TEXT_SPEED_MS = 30;
 
     const gameContainer = document.getElementById("game-container");
@@ -480,6 +569,9 @@
     const toast = document.getElementById("toast");
     const logModal = document.getElementById("log-modal");
     const logList = document.getElementById("log-list");
+    const glossaryModal = document.getElementById("glossary-modal");
+    const glossaryTitle = document.getElementById("glossary-title");
+    const glossaryBody = document.getElementById("glossary-body");
 
     if (typeof SCRIPT_TEXT === "undefined" || typeof GAME_ASSETS === "undefined") {
       titleScreen.classList.add("hidden");
@@ -488,12 +580,90 @@
       throw new Error("scenario.js not loaded");
     }
 
+    const GLOSSARY_DATA = (typeof GAME_GLOSSARY !== "undefined" && GAME_GLOSSARY) ? GAME_GLOSSARY : {};
+
     function resolveAsset(type, key) {
       if (!key || key === "none" || key === "hide" || key === "off") return "";
       if (GAME_ASSETS[type] && key in GAME_ASSETS[type]) {
         return GAME_ASSETS[type][key];
       }
       return key;
+    }
+
+    // 用語解説ウィンドウを開く
+    function openGlossary(key, fallbackLabel = "") {
+      const title = key || fallbackLabel;
+      const desc = GLOSSARY_DATA[key] || GLOSSARY_DATA[fallbackLabel] || "（この単語の説明はまだ登録されていません）";
+      glossaryTitle.textContent = title;
+      glossaryBody.textContent = desc;
+      glossaryModal.classList.remove("hidden");
+    }
+
+    // 用語解説ウィンドウを閉じる
+    function closeGlossary() {
+      glossaryModal.classList.add("hidden");
+    }
+
+    // [[単語]] や [[表示文字|辞書名]] を解析して要素の配列に分ける
+    function parseMessageSegments(rawText) {
+      if (!rawText) return [];
+      const segments = [];
+      const regex = /\[\[([^\]]+)\]\]/g;
+      let lastIndex = 0;
+      let match;
+
+      while ((match = regex.exec(rawText)) !== null) {
+        if (match.index > lastIndex) {
+          segments.push({
+            type: "text",
+            text: rawText.slice(lastIndex, match.index)
+          });
+        }
+        const inner = match[1];
+        const parts = inner.split("|");
+        const display = parts[0].trim();
+        const key = (parts[1] ? parts[1] : parts[0]).trim();
+        segments.push({
+          type: "term",
+          text: display,
+          key: key
+        });
+        lastIndex = regex.lastIndex;
+      }
+
+      if (lastIndex < rawText.length) {
+        segments.push({
+          type: "text",
+          text: rawText.slice(lastIndex)
+        });
+      }
+      return segments;
+    }
+
+    // コンテナ内に文章と色付き単語を生成する（バックログでも共通利用）
+    function buildRichTextNodes(container, rawText) {
+      container.innerHTML = "";
+      const segments = parseMessageSegments(rawText);
+      const items = [];
+
+      for (const seg of segments) {
+        if (seg.type === "term") {
+          const span = document.createElement("span");
+          span.className = "glossary-word";
+          span.textContent = seg.text;
+          span.addEventListener("click", (e) => {
+            e.stopPropagation();
+            openGlossary(seg.key, seg.text);
+          });
+          container.appendChild(span);
+          items.push({ node: span, fullText: seg.text });
+        } else {
+          const textNode = document.createTextNode(seg.text);
+          container.appendChild(textNode);
+          items.push({ node: textNode, fullText: seg.text });
+        }
+      }
+      return items;
     }
 
     // タイトル画面の初期セットアップ
@@ -530,7 +700,6 @@
       let currentUiHidden = false;
       let pendingUiPause = false;
 
-      // @ui off のあとにセリフが無いまま切り替わる場合、1クリック待機を挿入する
       const flushUiPauseIfNeeded = () => {
         if (pendingUiPause) {
           steps.push({
@@ -547,7 +716,6 @@
         const line = rawLine.trim();
         if (!line || line.startsWith("//")) continue;
 
-        // ラベル定義 (*label)
         if (line.startsWith("*")) {
           flushUiPauseIfNeeded();
           const labelName = line.slice(1).trim();
@@ -555,14 +723,12 @@
           continue;
         }
 
-        // タイトルへ戻るコマンド
         if (line === "@title" || line === "-> *title") {
           flushUiPauseIfNeeded();
           steps.push({ type: "title" });
           continue;
         }
 
-        // 無条件ジャンプ (-> *label)
         if (line.startsWith("->")) {
           flushUiPauseIfNeeded();
           const target = line.slice(2).trim().replace(/^\*/, "");
@@ -570,7 +736,6 @@
           continue;
         }
 
-        // クリック待機コマンド (@wait)
         if (line === "@wait") {
           pendingUiPause = false;
           steps.push({
@@ -582,21 +747,18 @@
           continue;
         }
 
-        // 背景変更 (@bg name / @bg off / @bg だけの空白)
         if (line === "@bg" || line.startsWith("@bg ")) {
           const val = line.slice(3).trim();
           currentBg = (val === "off" || val === "none" || val === "hide") ? "" : val;
           continue;
         }
 
-        // キャラ変更 (@chara name / @chara off / @chara だけの空白)
         if (line === "@chara" || line.startsWith("@chara ")) {
           const val = line.slice(6).trim();
           currentChara = (val === "off" || val === "none" || val === "hide") ? "" : val;
           continue;
         }
 
-        // メッセージウィンドウ表示オンオフ (@ui on / @ui off)
         if (line === "@ui" || line.startsWith("@ui ")) {
           const mode = line.slice(3).trim();
           const nextHidden = (mode === "" || mode === "hide" || mode === "none" || mode === "off");
@@ -610,7 +772,6 @@
           continue;
         }
 
-        // 章タイトル・中央テロップ（## 見出し）
         if (line.startsWith("##")) {
           pendingUiPause = false;
           const text = line.slice(2).trim();
@@ -623,14 +784,12 @@
           continue;
         }
 
-        // 名前変更（# 名前 / # off / # だけの空白）
         if (line === "#" || line.startsWith("# ")) {
           const val = line.slice(1).trim();
           currentName = (val === "off" || val === "none" || val === "hide") ? "" : val;
           continue;
         }
 
-        // 選択肢
         if (line.startsWith("?")) {
           pendingUiPause = false;
           const choiceStr = line.slice(1).trim();
@@ -659,7 +818,6 @@
           continue;
         }
 
-        // 通常セリフ
         pendingUiPause = false;
         steps.push({
           type: "say",
@@ -679,11 +837,19 @@
     const { steps: GAME_STEPS, labels: GAME_LABELS } = parseScenario(SCRIPT_TEXT);
 
     let currentIndex = 0;
-    let displayedText = "";
     let typingTimer = null;
     let isTyping = false;
     let isChoosing = false;
+    let currentTypingItems = [];
     let historyLog = [];
+
+    function finishTypingImmediately() {
+      clearInterval(typingTimer);
+      for (const item of currentTypingItems) {
+        item.node.textContent = item.fullText;
+      }
+      isTyping = false;
+    }
 
     function returnToTitle() {
       clearInterval(typingTimer);
@@ -691,6 +857,7 @@
       hideChoices();
       telopLayer.classList.add("hidden");
       logModal.classList.add("hidden");
+      closeGlossary();
       currentIndex = 0;
       titleScreen.classList.remove("hidden");
     }
@@ -786,7 +953,7 @@
         charaImage.style.display = "none";
       }
 
-      // クリック待機（@ui off 単体や @wait）の場合
+      // クリック待機
       if (step.type === "pause") {
         telopLayer.classList.add("hidden");
         if (step.uiHidden) {
@@ -797,7 +964,7 @@
         return;
       }
 
-      // 章タイトル・中央テロップ（##）の場合
+      // 章タイトル・中央テロップ
       if (step.type === "telop") {
         uiLayer.classList.add("hidden");
         telopText.textContent = step.text;
@@ -814,17 +981,15 @@
         return;
       }
 
-      // 通常セリフの場合：テロップを消す
+      // 通常セリフ
       telopLayer.classList.add("hidden");
 
-      // メッセージウィンドウの表示／非表示
       if (step.uiHidden) {
         uiLayer.classList.add("hidden");
       } else {
         uiLayer.classList.remove("hidden");
       }
 
-      // 名前枠の表示／非表示
       if (step.name) {
         charaName.textContent = step.name;
         nameBox.classList.remove("hidden");
@@ -850,23 +1015,40 @@
         }
       };
 
-      if (skipTyping || !step.text || step.uiHidden) {
-        messageText.textContent = step.text;
+      // 色付き単語を含んだDOM要素を組み立てる
+      currentTypingItems = buildRichTextNodes(messageText, step.text);
+      const totalChars = currentTypingItems.reduce((sum, item) => sum + item.fullText.length, 0);
+
+      if (skipTyping || totalChars === 0 || step.uiHidden) {
         onTextComplete();
         return;
       }
 
+      // 一旦すべて空文字にして1文字ずつ表示する
+      for (const item of currentTypingItems) {
+        item.node.textContent = "";
+      }
+
       isTyping = true;
-      displayedText = "";
-      messageText.textContent = "";
       let charPos = 0;
 
       typingTimer = setInterval(() => {
-        displayedText += step.text[charPos];
-        messageText.textContent = displayedText;
         charPos++;
+        let remaining = charPos;
 
-        if (charPos >= step.text.length) {
+        for (const item of currentTypingItems) {
+          if (remaining <= 0) {
+            item.node.textContent = "";
+          } else if (remaining >= item.fullText.length) {
+            item.node.textContent = item.fullText;
+            remaining -= item.fullText.length;
+          } else {
+            item.node.textContent = item.fullText.slice(0, remaining);
+            remaining = 0;
+          }
+        }
+
+        if (charPos >= totalChars) {
           clearInterval(typingTimer);
           onTextComplete();
         }
@@ -874,6 +1056,8 @@
     }
 
     function advance() {
+      // モーダルやタイトル画面が開いているときは本編を進めない
+      if (!glossaryModal.classList.contains("hidden")) return;
       if (!titleScreen.classList.contains("hidden")) return;
       if (!logModal.classList.contains("hidden")) return;
       if (isChoosing) return;
@@ -885,9 +1069,7 @@
       }
 
       if (isTyping) {
-        clearInterval(typingTimer);
-        messageText.textContent = step.text;
-        isTyping = false;
+        finishTypingImmediately();
         if (step.choices && step.choices.length > 0) {
           renderChoices(step.choices);
         }
@@ -912,6 +1094,7 @@
       }, 1800);
     }
 
+    // タイトル画面ボタン
     document.getElementById("btn-start").addEventListener("click", (e) => {
       e.stopPropagation();
       currentIndex = 0;
@@ -935,14 +1118,23 @@
       showToast("ロードしました");
     });
 
+    // 画面クリック・キー操作
     gameContainer.addEventListener("click", advance);
     document.addEventListener("keydown", (e) => {
+      if (!glossaryModal.classList.contains("hidden")) {
+        if (e.key === "Escape" || e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          closeGlossary();
+        }
+        return;
+      }
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         advance();
       }
     });
 
+    // save / Load / log ボタン
     document.getElementById("btn-save").addEventListener("click", (e) => {
       e.stopPropagation();
       const saveData = { currentIndex, historyLog };
@@ -966,12 +1158,23 @@
 
     document.getElementById("btn-log").addEventListener("click", (e) => {
       e.stopPropagation();
-      logList.innerHTML = historyLog.map(item => `
-        <div class="log-item">
-          <div class="log-name">${item.name || "（地の文）"}</div>
-          <div class="log-text">${item.text}</div>
-        </div>
-      `).join("");
+      logList.innerHTML = "";
+      for (const item of historyLog) {
+        const div = document.createElement("div");
+        div.className = "log-item";
+
+        const nameEl = document.createElement("div");
+        nameEl.className = "log-name";
+        nameEl.textContent = item.name || "（地の文）";
+
+        const textEl = document.createElement("div");
+        textEl.className = "log-text";
+        buildRichTextNodes(textEl, item.text);
+
+        div.appendChild(nameEl);
+        div.appendChild(textEl);
+        logList.appendChild(div);
+      }
       logModal.classList.remove("hidden");
       logList.scrollTop = logList.scrollHeight;
     });
@@ -982,6 +1185,18 @@
     });
     logModal.addEventListener("click", (e) => {
       e.stopPropagation();
+    });
+
+    // 用語解説ウィンドウを閉じる操作
+    document.getElementById("btn-close-glossary").addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeGlossary();
+    });
+    glossaryModal.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (e.target === glossaryModal) {
+        closeGlossary();
+      }
     });
 
     initTitleScreen();
